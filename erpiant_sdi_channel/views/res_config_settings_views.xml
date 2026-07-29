@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+
+    <!-- Impostazioni: il canale SDI è fisso su Erpiant e non modificabile da UI.
+         Mostro l'ambiente (sandbox/produzione) accanto al canale. -->
+    <record id="view_account_config_settings_erpiant" model="ir.ui.view">
+        <field name="name">res.config.settings.erpiant.sdi</field>
+        <field name="model">res.config.settings</field>
+        <field
+            name="inherit_id"
+            ref="l10n_it_sdi_channel.view_account_config_settings"
+        />
+        <field name="arch" type="xml">
+            <field name="sdi_channel_id" position="attributes">
+                <attribute name="readonly">1</attribute>
+                <attribute name="help">Fatturazione elettronica fornita esclusivamente dal servizio Erpiant.</attribute>
+            </field>
+            <field name="sdi_channel_id" position="after">
+                <field name="erpiant_environment" class="col-lg-6" />
+            </field>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+
+    <!-- Gruppo tecnico: unico abilitato a creare/modificare canali SDI.
+         NON viene assegnato ad alcun utente del tenant: la gestione dei
+         canali avviene solo via codice/post_init_hook (lock-down §7.7). -->
+    <record id="group_sdi_developer" model="res.groups">
+        <field name="name">Erpiant SDI: gestione canali (tecnico)</field>
+        <field name="category_id" ref="base.module_category_hidden" />
+    </record>
+
+    <!-- Lock-down ACL: revoca a account manager create/write/unlink su sdi.channel.
+         Override del record definito da l10n_it_sdi_channel. -->
+    <record id="l10n_it_sdi_channel.access_sdi_channel_manager" model="ir.model.access">
+        <field name="perm_read" eval="1" />
+        <field name="perm_write" eval="0" />
+        <field name="perm_create" eval="0" />
+        <field name="perm_unlink" eval="0" />
+    </record>
+
+</odoo>

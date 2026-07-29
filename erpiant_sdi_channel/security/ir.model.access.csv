@@ -1,0 +1,2 @@
+"id","name","model_id:id","group_id:id","perm_read","perm_write","perm_create","perm_unlink"
+"access_sdi_channel_developer","sdi_channel developer (full)","l10n_it_sdi_channel.model_sdi_channel","group_sdi_developer",1,1,1,1
