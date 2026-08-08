@@ -47,8 +47,33 @@ class SdiChannel(models.Model):
     )
     erpiant_auth_token = fields.Char(
         string="Token tenant",
+        readonly=True,
+        copy=False,
         help="Token Bearer rilasciato da erpiant.com per questo tenant. "
-        "La API Key Invoicetronic NON risiede nel tenant: vive solo nel broker.",
+        "La API Key Invoicetronic NON risiede nel tenant: vive solo nel broker.\n"
+        "NON si compila a mano: lo si ottiene attivando la fatturazione elettronica "
+        "con il numero di licenza del commercialista.",
+    )
+    # --- Attivazione tramite numero di licenza --------------------------------
+    # Decisione utente (2026-08-09): nel tenant entra SOLO il numero di licenza.
+    # I token — sia questa credenziale sia i prepagati — vivono su sito e broker, e
+    # il cliente li consulta nella propria area riservata. Motivo concreto: un campo
+    # token editabile permetteva di scavalcare licenza, wallet e tracciamento del
+    # commercialista incollando dentro un valore qualsiasi.
+    erpiant_license_code = fields.Char(
+        string="Numero di licenza",
+        copy=False,
+        help="Codice fornito dal commercialista. Attivandolo, il tenant riceve "
+        "automaticamente la credenziale per il broker: non serve (e non è "
+        "possibile) inserire token a mano.",
+    )
+    erpiant_activation_state = fields.Selection(
+        selection=[("inactive", "Non attiva"), ("active", "Attiva")],
+        string="Stato fatturazione elettronica",
+        compute="_compute_erpiant_activation_state",
+        store=True,
+        help="Attiva quando il tenant ha ottenuto la credenziale dal sito "
+        "tramite il numero di licenza.",
     )
     erpiant_environment = fields.Selection(
         selection=[("test", "Sandbox (test)"), ("live", "Produzione (live)")],
@@ -91,6 +116,45 @@ class SdiChannel(models.Model):
                 )
 
     # ------------------------------------------------------------------
+    # Attivazione
+    # ------------------------------------------------------------------
+    @api.depends("erpiant_auth_token", "erpiant_endpoint_url", "channel_type")
+    def _compute_erpiant_activation_state(self):
+        for channel in self:
+            channel.erpiant_activation_state = (
+                "active"
+                if (
+                    channel.channel_type == "erpiant_aws"
+                    and channel.erpiant_endpoint_url
+                    and channel.erpiant_auth_token
+                )
+                else "inactive"
+            )
+
+    def _erpiant_check_active(self):
+        """Blocca l'operazione se la fatturazione elettronica non è attivata.
+
+        Sostituisce l'errore tecnico che usciva prima («Token di autenticazione
+        verso il broker non configurato»): per il cliente era un'applicazione
+        rotta, non un servizio da attivare. Qui diciamo cosa fare e dove.
+        """
+        self.ensure_one()
+        if self.erpiant_activation_state == "active":
+            return
+        raise UserError(
+            _(
+                "La fatturazione elettronica non è ancora attiva su questa "
+                "installazione.\n\n"
+                "Per attivarla serve il NUMERO DI LICENZA che ti fornisce il tuo "
+                "commercialista. Inseriscilo in:\n"
+                "Opzioni → Impostazioni generali → Fatturazione elettronica\n\n"
+                "Il commercialista lo genera dopo aver attivato per te la "
+                "conservazione a norma presso l'Agenzia delle Entrate: è gratuita "
+                "e va fatta una sola volta."
+            )
+        )
+
+    # ------------------------------------------------------------------
     # Client
     # ------------------------------------------------------------------
     def _erpiant_get_client(self):
@@ -113,6 +177,7 @@ class SdiChannel(models.Model):
         successivi (consegna/scarto/…) sono raccolti dal cron ``_erpiant_pull``.
         """
         self.ensure_one()
+        self._erpiant_check_active()
         client = self._erpiant_get_client()
         for attachment in attachment_out_ids:
             xml_bytes = base64.b64decode(attachment.datas)
@@ -255,10 +320,7 @@ class SdiChannel(models.Model):
     def action_erpiant_pull_now(self):
         """Azione manuale: forza subito il pull (debug/diagnostica)."""
         for channel in self.filtered(lambda c: c.channel_type == "erpiant_aws"):
-            if not (channel.erpiant_endpoint_url and channel.erpiant_auth_token):
-                raise UserError(
-                    _("Configurare URL broker e token prima di sincronizzare.")
-                )
+            channel._erpiant_check_active()
             channel._erpiant_pull_updates()
             channel._erpiant_pull_inbound()
         return True

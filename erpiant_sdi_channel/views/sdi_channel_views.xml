@@ -30,9 +30,22 @@
                     attrs="{'invisible': [('channel_type', '!=', 'erpiant_aws')]}"
                     placeholder="https://sdi.erpiant.com/sdi"
                 />
+                <!-- Il token NON è più compilabile a mano (decisione utente
+                     2026-08-09): arriva solo dall'attivazione con numero di licenza,
+                     che lo ottiene dal sito. Un campo editabile qui permetteva di
+                     incollare una credenziale arbitraria, scavalcando licenza,
+                     wallet e tracciamento del commercialista. Resta visibile in sola
+                     lettura al gruppo tecnico per diagnosi: sapere SE c'è un token
+                     serve, poterlo scrivere no. -->
+                <field
+                    name="erpiant_activation_state"
+                    attrs="{'invisible': [('channel_type', '!=', 'erpiant_aws')]}"
+                />
                 <field
                     name="erpiant_auth_token"
                     password="True"
+                    readonly="1"
+                    groups="erpiant_sdi_channel.group_sdi_developer"
                     attrs="{'invisible': [('channel_type', '!=', 'erpiant_aws')]}"
                 />
             </field>
