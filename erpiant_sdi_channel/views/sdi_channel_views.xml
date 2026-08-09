@@ -42,6 +42,22 @@
                     attrs="{'invisible': [('channel_type', '!=', 'erpiant_aws')]}"
                 />
                 <field
+                    name="erpiant_license_code"
+                    placeholder="ERP-XXXX-XXXX-XXXX"
+                    attrs="{'invisible': [('channel_type', '!=', 'erpiant_aws')]}"
+                />
+                <button
+                    name="action_erpiant_activate"
+                    type="object"
+                    string="Attiva fatturazione elettronica"
+                    class="btn-primary"
+                    attrs="{'invisible': ['|', ('channel_type', '!=', 'erpiant_aws'), ('erpiant_activation_state', '=', 'active')]}"
+                />
+                <field
+                    name="erpiant_tenant_ref"
+                    attrs="{'invisible': ['|', ('channel_type', '!=', 'erpiant_aws'), ('erpiant_tenant_ref', '=', False)]}"
+                />
+                <field
                     name="erpiant_auth_token"
                     password="True"
                     readonly="1"

@@ -4,12 +4,23 @@
 import base64
 import logging
 
+import requests
+
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError, ValidationError
 
 from .erpiant_client import ErpiantSdiClient, ErpiantSdiError
 
 _logger = logging.getLogger(__name__)
+
+#: Sito che media l'attivazione. Sovrascrivibile con l'``ir.config_parameter``
+#: ``erpiant_sdi_channel.site_url`` (utile in devel/staging), ma il default deve
+#: funzionare senza configurazione: il cliente installa e attiva, punto.
+DEFAULT_SITE_URL = "https://www.erpiant.com"
+
+#: L'attivazione attraversa sito -> broker -> Invoicetronic (registrazione P.IVA):
+#: la catena e' piu' lunga di una chiamata normale, per questo il timeout e' ampio.
+ACTIVATION_TIMEOUT = 60
 
 #: Lock-down esclusività fornitore (cfr. doc/ARCHITETTURA_erpiant_sdi_channel.md §7.7).
 #: Disattivare questa guardia per consentire fornitori SDI diversi da Erpiant
@@ -66,6 +77,14 @@ class SdiChannel(models.Model):
         help="Codice fornito dal commercialista. Attivandolo, il tenant riceve "
         "automaticamente la credenziale per il broker: non serve (e non è "
         "possibile) inserire token a mano.",
+    )
+    erpiant_tenant_ref = fields.Char(
+        string="Riferimento assistenza",
+        readonly=True,
+        copy=False,
+        help="Identificativo del tenant presso erpiant.com. NON è un segreto: è "
+        "l'unico riferimento citabile quando si chiede assistenza, perché il "
+        "token non si può comunicare a nessuno.",
     )
     erpiant_activation_state = fields.Selection(
         selection=[("inactive", "Non attiva"), ("active", "Attiva")],
@@ -153,6 +172,148 @@ class SdiChannel(models.Model):
                 "e va fatta una sola volta."
             )
         )
+
+    # ------------------------------------------------------------------
+    # Attivazione con numero di licenza
+    # ------------------------------------------------------------------
+    def action_erpiant_activate(self):
+        """Scambia il numero di licenza con la credenziale, tramite il SITO.
+
+        Il tenant NON parla mai in privilegiato col broker: `/provisioning/tenant`
+        e' admin-only e quel token vive in SSM per il solo task role del sito. Se
+        il tenant avesse credenziali admin, chiunque riceva l'.exe potrebbe coniare
+        token per P.IVA altrui. Quindi: tenant -> sito -> broker.
+
+        Contratto concordato sulla board (Sito-Struttura `ec62995`, Broker
+        `c3df29e`): POST {site}/sdi/activation con {license_code, vat} ->
+        {token, endpoint_url, environment, tenant_id, rotated}.
+        """
+        self.ensure_one()
+        code = (self.erpiant_license_code or "").strip()
+        if not code:
+            raise UserError(_(
+                "Inserisci il numero di licenza che ti ha fornito il commercialista."
+            ))
+
+        company = self.company_id or self.env.company
+        vat = (company.vat or "").strip()
+        if not vat:
+            raise UserError(_(
+                "Prima di attivare la fatturazione elettronica devi indicare la "
+                "partita IVA della tua azienda in:\n"
+                "Opzioni → Impostazioni generali → Aziende."
+            ))
+
+        site_url = (
+            self.env["ir.config_parameter"].sudo()
+            .get_param("erpiant_sdi_channel.site_url", DEFAULT_SITE_URL)
+            .rstrip("/")
+        )
+        try:
+            response = requests.post(
+                "%s/sdi/activation" % site_url,
+                json={"license_code": code, "vat": vat},
+                headers={"Accept": "application/json"},
+                timeout=ACTIVATION_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            _logger.warning("Erpiant SDI: attivazione irraggiungibile: %s", exc)
+            raise UserError(_(
+                "Non riesco a contattare erpiant.com per attivare la licenza.\n\n"
+                "Verifica la connessione a internet e riprova. Se il problema "
+                "persiste, il servizio potrebbe essere temporaneamente non "
+                "disponibile: la licenza resta valida e puoi riprovare più tardi."
+            )) from exc
+
+        self._erpiant_raise_for_activation(response)
+
+        data = response.json()
+        token = (data or {}).get("token")
+        if not token:
+            raise UserError(_(
+                "erpiant.com ha risposto senza la credenziale di attivazione. "
+                "Riprova; se persiste, segnala il problema indicando il tuo numero "
+                "di licenza."
+            ))
+
+        # Scrittura in sudo: i campi sono readonly proprio perche' nessun umano
+        # deve poterli comporre a mano. Qui li scrive il flusso di attivazione.
+        vals = {
+            "erpiant_auth_token": token,
+            "erpiant_endpoint_url": data.get("endpoint_url") or self.erpiant_endpoint_url,
+        }
+        if data.get("environment") in ("test", "live"):
+            vals["erpiant_environment"] = data["environment"]
+        if data.get("tenant_id"):
+            vals["erpiant_tenant_ref"] = data["tenant_id"]
+        self.sudo().write(vals)
+
+        # `rotated` distingue reinstallazione da prima attivazione: senza, a chi
+        # reinstalla diremmo "attivata!" come se fosse la prima volta, e non
+        # capirebbe se il credito residuo e' ancora suo.
+        if data.get("rotated"):
+            message = _(
+                "Fatturazione elettronica riattivata su questa installazione.\n\n"
+                "Il tuo credito e lo storico degli invii sono stati mantenuti."
+            )
+        else:
+            message = _("Fatturazione elettronica attivata.")
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {"title": _("Attivazione"), "message": message,
+                       "type": "success", "sticky": False},
+        }
+
+    @staticmethod
+    def _erpiant_raise_for_activation(response):
+        """Traduce la risposta HTTP in un messaggio utile a un micro-imprenditore.
+
+        Ogni codice dice cosa fare, non cosa e' successo a noi: chi legge non sa
+        (e non deve sapere) cosa sia un 403 o un gate Basic Auth.
+        """
+        if response.status_code == 200:
+            return
+        if response.status_code == 404:
+            raise UserError(_(
+                "Numero di licenza non riconosciuto.\n\n"
+                "Controlla di averlo copiato per intero (ha la forma "
+                "ERP-XXXX-XXXX-XXXX). Se il problema persiste, chiedi al tuo "
+                "commercialista di verificarlo."
+            ))
+        if response.status_code == 403:
+            raise UserError(_(
+                "Il numero di licenza non corrisponde alla partita IVA di questa "
+                "azienda.\n\n"
+                "Verifica la partita IVA in Opzioni → Impostazioni generali → "
+                "Aziende. Se è corretta, la licenza è stata emessa per un'altra "
+                "azienda: chiedi al tuo commercialista."
+            ))
+        if response.status_code == 401:
+            # Il sito è dietro il gate Basic Auth di Traefik fino al go-live e
+            # `/sdi/activation` va esentato (segnalato dal Broker, in coda infra).
+            # Fino ad allora QUESTO è l'errore che si vede: senza un messaggio
+            # dedicato sembrerebbe una licenza sbagliata, e si perderebbe tempo
+            # a cercare il problema dalla parte opposta.
+            raise UserError(_(
+                "Il servizio di attivazione non è ancora aperto al pubblico.\n\n"
+                "Non è un problema della tua licenza. Riprova più tardi o "
+                "contatta l'assistenza."
+            ))
+        if response.status_code in (502, 503, 504):
+            raise UserError(_(
+                "Il servizio di attivazione è momentaneamente non disponibile.\n\n"
+                "La tua licenza resta valida: riprova fra qualche minuto."
+            ))
+        _logger.warning(
+            "Erpiant SDI: attivazione HTTP %s: %s",
+            response.status_code, (response.text or "")[:300],
+        )
+        raise UserError(_(
+            "Attivazione non riuscita (codice %s).\n\n"
+            "Riprova; se persiste, segnala il problema indicando il tuo numero "
+            "di licenza."
+        ) % response.status_code)
 
     # ------------------------------------------------------------------
     # Client
