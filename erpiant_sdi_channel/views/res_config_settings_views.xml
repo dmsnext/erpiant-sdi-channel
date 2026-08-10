@@ -17,6 +17,46 @@
             </field>
             <field name="sdi_channel_id" position="after">
                 <field name="erpiant_environment" class="col-lg-6" />
+                <field name="erpiant_activation_state" invisible="1" />
+
+                <!-- NON ATTIVA: il cliente vede cosa gli manca e come ottenerlo.
+                     Prima qui non c'era nulla e l'unico segnale era un errore
+                     tecnico al momento dell'invio: sembrava un guasto, non un
+                     servizio da attivare. -->
+                <div class="mt-3"
+                     attrs="{'invisible': [('erpiant_activation_state', '=', 'active')]}">
+                    <div class="alert alert-warning" role="alert">
+                        <strong>Fatturazione elettronica non attiva.</strong>
+                        <br />
+                        Per attivarla inserisci il <strong>numero di licenza</strong>
+                        che ti fornisce il tuo commercialista. Lo genera lui dopo aver
+                        attivato per te la <em>conservazione a norma</em> presso
+                        l'Agenzia delle Entrate: è gratuita e si fa una volta sola.
+                    </div>
+                    <div class="row">
+                        <div class="col-lg-6">
+                            <label for="erpiant_license_code" class="o_form_label" />
+                            <field name="erpiant_license_code"
+                                   placeholder="ERP-XXXX-XXXX-XXXX"
+                                   nolabel="1" />
+                        </div>
+                    </div>
+                    <button name="action_erpiant_activate" type="object"
+                            string="Attiva fatturazione elettronica"
+                            class="btn-primary mt-2" />
+                </div>
+
+                <!-- ATTIVA: mostro il riferimento assistenza, che è l'unico dato
+                     che il cliente può comunicare (il token no). -->
+                <div class="mt-3"
+                     attrs="{'invisible': [('erpiant_activation_state', '!=', 'active')]}">
+                    <div class="alert alert-success" role="alert">
+                        <strong>Fatturazione elettronica attiva.</strong>
+                        <br />
+                        Se ti serve assistenza, comunica questo riferimento:
+                        <field name="erpiant_tenant_ref" class="oe_inline" readonly="1" />
+                    </div>
+                </div>
             </field>
         </field>
     </record>
