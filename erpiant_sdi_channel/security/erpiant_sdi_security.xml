@@ -18,4 +18,29 @@
         <field name="perm_unlink" eval="0" />
     </record>
 
+    <!-- Chi fattura può anche inviare allo SdI in un passaggio solo.
+
+         `l10n_it_sdi_channel.res_groups_validate_send` governa il bottone
+         "Validate, export and send to SdI" sulla fattura in bozza, ma a monte
+         non è assegnato a nessuno: essendo un gruppo vuoto, in un tenant appena
+         installato quel bottone NON lo vede neanche l'amministratore, e l'invio
+         resta possibile solo per la via lunga (Export E-invoice -> aprire
+         l'allegato -> Send to SdI). Per una microimpresa è attrito sulla
+         operazione più frequente che farà.
+
+         NON è un'estensione di privilegi: il bottone "Send to SdI" sull'allegato
+         (l10n_it_sdi_channel/views/fatturapa_attachment_views.xml) non ha alcun
+         attributo `groups`, quindi chi può già emettere fatture può già inviare.
+         Qui cambia solo il numero di passaggi.
+
+         Si implica da `account.group_account_invoice` (Fatturazione), che è il
+         gradino più basso della gerarchia contabile: così lo ereditano anche
+         Contabile e Amministratore di fatturazione. -->
+    <record id="account.group_account_invoice" model="res.groups">
+        <field
+            name="implied_ids"
+            eval="[(4, ref('l10n_it_sdi_channel.res_groups_validate_send'))]"
+        />
+    </record>
+
 </odoo>
