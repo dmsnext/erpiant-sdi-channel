@@ -22,6 +22,24 @@ DEFAULT_SITE_URL = "https://www.erpiant.com"
 #: la catena e' piu' lunga di una chiamata normale, per questo il timeout e' ampio.
 ACTIVATION_TIMEOUT = 60
 
+#: Campi del blocco ``company`` restituito da ``POST /sdi/activation`` (prodotto da
+#: `erpiant_sdi_licensing`, commit `0ee3df3`) → campo corrispondente sull'anagrafica
+#: dell'azienda, più l'etichetta da mostrare all'utente.
+#: `state_code`/`country_code` arrivano come CODICI e si risolvono a parte.
+#:
+#: ⚠️ ``vat`` NON è in questo elenco di proposito: ``action_erpiant_activate``
+#: pretende la partita IVA dell'azienda **prima** di chiamare il sito, quindi a
+#: questo punto non è mai vuota e precompilarla sarebbe codice morto. Il sito
+#: continua a mandarla (è innocua), ma qui non si consuma.
+COMPANY_PREFILL_FIELDS = [
+    ("name", "name", "ragione sociale"),
+    ("street", "street", "indirizzo"),
+    ("zip", "zip", "CAP"),
+    ("city", "city", "città"),
+    ("email", "email", "e-mail"),
+    ("phone", "phone", "telefono"),
+]
+
 #: Lock-down esclusività fornitore (cfr. doc/ARCHITETTURA_erpiant_sdi_channel.md §7.7).
 #: Disattivare questa guardia per consentire fornitori SDI diversi da Erpiant
 #: richiede una MODIFICA DEL CODICE (e redeploy): non è esposta in UI né in
@@ -258,12 +276,95 @@ class SdiChannel(models.Model):
             )
         else:
             message = _("Fatturazione elettronica attivata.")
+
+        # I dati dell'azienda li abbiamo già sul sito: evitiamo all'utente di
+        # ridigitarli. Si MOSTRA cosa è stato scritto invece di applicarlo in
+        # silenzio: è l'intestazione legale delle sue fatture, deve rivederla.
+        filled = self._erpiant_prefill_company(data.get("company"))
+        if filled:
+            message += "\n\n" + (
+                _(
+                    "Ho precompilato dai dati del tuo account: %s.\n"
+                    "Controllali in Opzioni → Impostazioni generali → Aziende: "
+                    "finiscono sull'intestazione delle tue fatture."
+                )
+                % ", ".join(filled)
+            )
         return {
             "type": "ir.actions.client",
             "tag": "display_notification",
             "params": {"title": _("Attivazione"), "message": message,
                        "type": "success", "sticky": False},
         }
+
+    def _erpiant_prefill_company(self, payload):
+        """Precompila i campi **vuoti** dell'anagrafica azienda coi dati del sito.
+
+        Chi si registra su erpiant.com digita già ragione sociale, partita IVA e
+        indirizzo. Senza questo passaggio li ridigita qui, perché il database
+        precostruito dell'installer parte con un'azienda ``My Company`` senza
+        partita IVA e senza indirizzo — e siccome il provisioning è idempotente
+        su ``(partita IVA, ambiente)``, un refuso nella seconda digitazione
+        **rompe l'aggancio**. Non è attrito: è un invito a sbagliare.
+
+        Due regole ferme, concordate sulla board il 2026-10-08:
+
+        1. **non si sovrascrive mai un campo già valorizzato** — se l'utente ha
+           già configurato l'azienda, comanda lui;
+        2. **non si fa mai fallire l'attivazione** per un dato anagrafico: il
+           canale è attivo comunque, al massimo l'anagrafica resta da completare.
+
+        :return: le etichette dei campi effettivamente scritti, per dirglielo.
+        """
+        if not isinstance(payload, dict) or not payload:
+            return []
+
+        partner = (self.company_id or self.env.company).partner_id
+        vals = {}
+        filled = []
+        for key, fname, label in COMPANY_PREFILL_FIELDS:
+            value = payload.get(key)
+            if isinstance(value, str):
+                value = value.strip()
+            if value and not partner[fname]:
+                vals[fname] = value
+                filled.append(label)
+
+        # Nazione e provincia arrivano come codici (`IT`, `MO`) e non come nomi:
+        # sui nomi servirebbe un match a tentoni, per giunta dipendente dalla
+        # lingua del tenant.
+        country = self.env["res.country"]
+        country_code = (payload.get("country_code") or "").strip().upper()
+        if country_code and not partner.country_id:
+            country = country.search([("code", "=", country_code)], limit=1)
+            if country:
+                vals["country_id"] = country.id
+                filled.append("nazione")
+
+        state_code = (payload.get("state_code") or "").strip().upper()
+        if state_code and not partner.state_id:
+            domain = [("code", "=", state_code)]
+            # La provincia va cercata dentro la nazione giusta: i codici a due
+            # lettere si ripetono fra paesi diversi.
+            scope = country or partner.country_id
+            if scope:
+                domain.append(("country_id", "=", scope.id))
+            state = self.env["res.country.state"].search(domain, limit=1)
+            if state:
+                vals["state_id"] = state.id
+                filled.append("provincia")
+
+        if not vals:
+            return []
+
+        try:
+            partner.sudo().write(vals)
+        except (UserError, ValidationError) as exc:
+            # Un dato anagrafico storto lato sito non deve costare l'attivazione:
+            # il canale resta attivo, l'anagrafica resta da completare a mano.
+            _logger.warning("Erpiant SDI: precompilazione azienda saltata: %s", exc)
+            return []
+        return filled
 
     @staticmethod
     def _erpiant_raise_for_activation(response):
