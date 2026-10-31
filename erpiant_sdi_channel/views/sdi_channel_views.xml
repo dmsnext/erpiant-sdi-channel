@@ -80,9 +80,14 @@
     </record>
 
     <!-- Lock-down UI: il menu "ES Channels" è riservato al gruppo tecnico. -->
-    <menuitem
-        id="l10n_it_sdi_channel.menu_sdi_channel"
-        groups="erpiant_sdi_channel.group_sdi_developer"
-    />
+    <!-- record e non menuitem: un menuitem senza parent azzera il padre e porta il menu
+         fra le applicazioni, senza icona. -->
+    <record id="l10n_it_sdi_channel.menu_sdi_channel" model="ir.ui.menu">
+        <field name="parent_id" ref="account.account_account_menu" />
+        <field
+            name="groups_id"
+            eval="[(6, 0, [ref('erpiant_sdi_channel.group_sdi_developer')])]"
+        />
+    </record>
 
 </odoo>

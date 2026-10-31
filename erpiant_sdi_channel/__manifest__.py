@@ -10,7 +10,9 @@
     # SALTA — e le colonne nuove non vengono create. Sintomo osservato il 2026-10-09:
     # `psycopg2.errors.UndefinedColumn: column sdi_channel.erpiant_license_code does not
     # exist` aprendo le Impostazioni. Ogni commit che tocca i campi deve alzarla.
-    "version": "16.0.1.3.0",
+    # ⚠️ 16.0.1.3.0 → 16.0.1.4.0: il menu dei canali torna sotto Configurazione →
+    # Contabilità, il menuitem senza parent lo aveva portato fra le applicazioni.
+    "version": "16.0.1.4.0",
     "category": "Accounting/Localizations/EDI",
     "author": "DMSNEXT",
     "website": "https://erpiant.com",
