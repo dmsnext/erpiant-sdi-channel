@@ -106,6 +106,15 @@ class TestCompanyPrefill(TransactionCase):
         self.assertIn("indirizzo", message)
         self.assertIn("Aziende", message)
 
+    def test_factory_company_name_is_replaced(self):
+        """«My Company» è il nome di fabbrica del database precostruito, non una
+        scelta dell'utente: va sostituito come se fosse vuoto."""
+        self.partner.name = "My Company"
+        action = self._activate(COMPANY_BLOCK)
+        self.assertEqual(self.partner.name, "Panificio Aurora S.r.l.")
+        self.assertEqual(self.company.name, "Panificio Aurora S.r.l.")
+        self.assertIn("ragione sociale", action["params"]["message"])
+
     # ------------------------------------------------------------------
     # La regola che protegge l'utente: comanda lui
     # ------------------------------------------------------------------
@@ -117,6 +126,12 @@ class TestCompanyPrefill(TransactionCase):
         # I campi che erano vuoti vengono comunque riempiti: si completa, non si
         # sostituisce.
         self.assertEqual(self.partner.zip, "41122")
+
+    def test_real_company_name_is_never_overwritten(self):
+        self.partner.name = "Mobilificio Rossi"
+        action = self._activate(COMPANY_BLOCK)
+        self.assertEqual(self.partner.name, "Mobilificio Rossi")
+        self.assertNotIn("ragione sociale", action["params"]["message"])
 
     def test_prefill_does_not_mention_untouched_fields(self):
         self.partner.street = "Via Giardini 100"

@@ -40,6 +40,12 @@ COMPANY_PREFILL_FIELDS = [
     ("phone", "phone", "telefono"),
 ]
 
+#: Ragione sociale di fabbrica del database precostruito (dati di base del
+#: gestionale). Per la precompilazione vale come campo vuoto: altrimenti la
+#: regola «non sovrascrivere» la protegge e l'azienda resta «My Company»
+#: sull'intestazione delle fatture anche quando il sito conosce il nome vero.
+PLACEHOLDER_COMPANY_NAMES = ("My Company",)
+
 #: Lock-down esclusività fornitore (cfr. doc/ARCHITETTURA_erpiant_sdi_channel.md §7.7).
 #: Disattivare questa guardia per consentire fornitori SDI diversi da Erpiant
 #: richiede una MODIFICA DEL CODICE (e redeploy): non è esposta in UI né in
@@ -326,7 +332,10 @@ class SdiChannel(models.Model):
             value = payload.get(key)
             if isinstance(value, str):
                 value = value.strip()
-            if value and not partner[fname]:
+            current = partner[fname]
+            if fname == "name" and (current or "").strip() in PLACEHOLDER_COMPANY_NAMES:
+                current = False
+            if value and not current:
                 vals[fname] = value
                 filled.append(label)
 
