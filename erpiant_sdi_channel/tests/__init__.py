@@ -5,3 +5,4 @@ from . import test_activation
 from . import test_sede_guard
 from . import test_security_groups
 from . import test_company_prefill
+from . import test_payment_data

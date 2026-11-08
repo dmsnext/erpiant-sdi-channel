@@ -115,3 +115,31 @@ class AccountMove(models.Model):
                     }
                 )
         return res
+
+    def _compute_fatturapa_payment_term_data(self):
+        """Metodo e termine fiscale di pagamento anche senza condizioni di pagamento.
+
+        ``l10n_it_fatturapa_out`` li prende dalle condizioni di pagamento della
+        fattura, e ``preventive_checks()`` ferma l'export se mancano quando la
+        fattura ha una scadenza: il core la valorizza sempre, quindi una fattura
+        senza condizioni non si potrebbe mai inviare. Qui si ripiega su MP05
+        (bonifico) e TP02 (pagamento completo), come la 18, dove ``l10n_it_edi``
+        scrive sempre MP05. L'utente li cambia nella scheda Fattura elettronica
+        finché la fattura non è inviata.
+
+        Restano fuori le autofatture del reverse charge (``rc_purchase_invoice_id``):
+        ``l10n_it_fatturapa_out_rc`` ne toglie apposta la scadenza perché non
+        abbiano ``<DatiPagamento>``.
+        """
+        res = super()._compute_fatturapa_payment_term_data()
+        method = self.env.ref("l10n_it_fiscal_payment_term.fatturapa_mp05", raise_if_not_found=False)
+        term = self.env.ref("l10n_it_fiscal_payment_term.fatturapa_tp02", raise_if_not_found=False)
+        has_rc = "rc_purchase_invoice_id" in self._fields
+        for invoice in self:
+            if not invoice.is_sale_document() or (has_rc and invoice.rc_purchase_invoice_id):
+                continue
+            if not invoice.fatturapa_payment_method_id:
+                invoice.fatturapa_payment_method_id = method
+            if not invoice.fatturapa_payment_term_id:
+                invoice.fatturapa_payment_term_id = term
+        return res
